@@ -2,8 +2,7 @@ N64_INST ?= $(HOME)/n64
 include $(N64_INST)/include/n64.mk
 
 ROM_NAME := mpk_dump_fla
-
-src := mpk_dump_fla.c
+src := src/mpk_dump_fla.c
 
 # Optional: smaller ROM
 CFLAGS += -Os
