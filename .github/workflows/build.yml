@@ -10,16 +10,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build ROM
+      - name: Show env (diagnose)
         run: |
-          if command -v libdragon >/dev/null 2>&1; then
-            libdragon make
-          else
-            export N64_INST=/opt/libdragon
-            make
-          fi
+          set -x
+          echo "N64_INST=$N64_INST"
+          ls -la
+          ls -la src || true
+
+      - name: Build ROM (verbose)
+        run: |
+          export N64_INST=/opt/libdragon
+          make clean || true
+          make -j1 V=1
 
       - name: Upload ROM
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mpk_dump_fla
