@@ -7,18 +7,19 @@
 #define BANKS        4
 #define PAGES        128            // 128 × 256 B = 32 KiB pro Bank
 #define PAGE_SIZE    256
-#define ADR_BANKSEL  0x8000         // Joypad macro: JOYPAD_CONTROLLER_PAK_BANK_SWITCH_ADDRESS
+#define BLK_SIZE     32
+#define ADR_BANKSEL  0x8000         // Bank-Switch per 32B-Write
 
 static uint8_t dumpbuf[BANKS * PAGES * PAGE_SIZE] __attribute__((aligned(64)));
 
-static void logf(const char *fmt, ...) {
+static void dbgln(const char *fmt, ...) {
     char s[128];
     va_list ap; va_start(ap, fmt); vsnprintf(s, sizeof(s), fmt, ap); va_end(ap);
     debugf("%s\n", s);
 }
 
 static int bank_select(int port, int bank) {
-    uint8_t blk[32] = {0};
+    uint8_t blk[BLK_SIZE] = {0};
     blk[0] = (uint8_t)(bank & 0x03); // 0..3
     // 32-Byte-Write an 0x8000 schaltet die Bank (Joybus Accessory Write)
     joypad_accessory_error_t err =
@@ -51,36 +52,36 @@ int main(void) {
     // Joypad-Subsystem initialisieren & Zubehör checken
     joypad_init();
     if (!joypad_is_connected(JOYPAD_PORT_1)) {
-        logf("ERROR: Kein Controller an Port 1.");
+        dbgln("ERROR: Kein Controller an Port 1.");
         for(;;) {}
     }
     if (joypad_get_accessory_type(JOYPAD_PORT_1) != JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK) {
-        logf("ERROR: Kein Controller-Pak an Port 1.");
+        dbgln("ERROR: Kein Controller-Pak an Port 1.");
         for(;;) {}
     }
 
     // Bis zu 4 Bänke lesen
     for (int b = 0; b < BANKS; b++) {
         if (bank_select(JOYPAD_PORT_1, b)) {
-            logf("WARN: Bank %d nicht schaltbar — rest mit 0xFF.", b);
+            dbgln("WARN: Bank %d nicht schaltbar — rest mit 0xFF.", b);
             memset(dumpbuf + b*PAGES*PAGE_SIZE, 0xFF, (BANKS - b)*PAGES*PAGE_SIZE);
             break;
         }
         for (int s = 0; s < PAGES; s++) {
             uint16_t addr = (uint16_t)(s * PAGE_SIZE); // 0x0000..0x7FE0
             if (read_page256(JOYPAD_PORT_1, addr, dumpbuf + (b*PAGES + s)*PAGE_SIZE)) {
-                logf("WARN: Read-Fehler in Bank %d, Seite %d.", b, s);
+                dbgln("WARN: Read-Fehler in Bank %d, Seite %d.", b, s);
                 memset(dumpbuf + (b*PAGES + s)*PAGE_SIZE, 0xFF,
                        (BANKS*PAGES - (b*PAGES + s))*PAGE_SIZE);
                 goto write_out;
             }
-            if ((s & 7) == 0) logf("Bank %d: %d/%d Seiten gelesen", b, s, PAGES);
+            if ((s & 7) == 0) dbgln("Bank %d: %d/%d Seiten gelesen", b, s, PAGES);
         }
     }
 
 write_out:
-    logf("Schreibe 128 KiB in FlashRAM …");
+    dbgln("Schreibe 128 KiB in FlashRAM …");
     flashram_store_full_dump(dumpbuf, sizeof(dumpbuf));
-    logf("Fertig. RESET → Flashcart erstellt .fla (131072 Bytes).");
+    dbgln("Fertig. RESET → Flashcart erstellt .fla (131072 Bytes).");
     for(;;) {}
 }
