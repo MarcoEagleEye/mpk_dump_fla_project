@@ -1,15 +1,13 @@
-// mpk_dump_fla.c — Dump 4×32 KiB Mempak-Bänke in FlashRAM (ergibt .fla = 128 KiB)
+// mpk_dump_fla.c — Dump 4×32 KiB Controller-Pak-Bänke in FlashRAM (.fla = 128 KiB)
 #include <libdragon.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 
-#define BANKS 4
-#define PAGES 128          // 128 × 256 B = 32 KiB pro Bank
-#define PAGE_SIZE 256
-#define BLK_SIZE 32
-#define ADR_BANK   0x8000  // 0x8000.. Kommandobereich (Bankselect)
-#define ADR_DATA   0x0000  // 0x0000..0x7FE0 Datenfenster
+#define BANKS        4
+#define PAGES        128            // 128 × 256 B = 32 KiB pro Bank
+#define PAGE_SIZE    256
+#define ADR_BANKSEL  0x8000         // Joypad macro: JOYPAD_CONTROLLER_PAK_BANK_SWITCH_ADDRESS
 
 static uint8_t dumpbuf[BANKS * PAGES * PAGE_SIZE] __attribute__((aligned(64)));
 
@@ -19,29 +17,28 @@ static void logf(const char *fmt, ...) {
     debugf("%s\n", s);
 }
 
-static int mempak_bank_select(int port, int bank) {
-    uint8_t blk[BLK_SIZE] = {0};
-    blk[0] = (uint8_t)(bank & 0x03);   // 0..3
-    return mempak_write(port, ADR_BANK, blk);
+static int bank_select(int port, int bank) {
+    uint8_t blk[32] = {0};
+    blk[0] = (uint8_t)(bank & 0x03); // 0..3
+    // 32-Byte-Write an 0x8000 schaltet die Bank (Joybus Accessory Write)
+    joypad_accessory_error_t err =
+        joypad_accessory_xfer(port, JOYPAD_ACCESSORY_XFER_WRITE, ADR_BANKSEL, blk, sizeof(blk));
+    return (err == JOYPAD_ACCESSORY_ERROR_NONE) ? 0 : -1;
 }
 
-static int mempak_read_256(int port, uint16_t base_addr, uint8_t *dst256) {
-    // 8 × 32-Byte-Blöcke zu 256-Byte-Page zusammenbauen
-    for (int i = 0; i < 8; i++) {
-        int rc = mempak_read(port, base_addr + i*BLK_SIZE, dst256 + i*BLK_SIZE);
-        if (rc) return rc;
-    }
-    return 0;
+static int read_page256(int port, uint16_t base_addr, uint8_t *dst256) {
+    // 256-Byte-Read (8×32B) — Joypad Accessory Read erlaubt 256B am Stück
+    joypad_accessory_error_t err =
+        joypad_accessory_xfer(port, JOYPAD_ACCESSORY_XFER_READ, base_addr, dst256, PAGE_SIZE);
+    return (err == JOYPAD_ACCESSORY_ERROR_NONE) ? 0 : -1;
 }
 
 static void flashram_store_full_dump(const void *buf, size_t len) {
-    // Nur flashram_init + flashram_write (keine optionalen Symbole -> robust im Container)
+    // robust: nur init + write, keine optionalen Symbole
     flashram_init();
-
-    size_t off = 0;
-    const uint8_t *p = (const uint8_t*)buf;
+    size_t off = 0; const uint8_t *p = (const uint8_t*)buf;
     while (off < len) {
-        size_t n = (len - off > 128) ? 128 : (len - off);   // 128-Byte-Schreibblöcke
+        size_t n = (len - off > 128) ? 128 : (len - off); // 128-Byte-Schreibblöcke
         flashram_write(off, p + off, n);
         off += n;
     }
@@ -50,26 +47,29 @@ static void flashram_store_full_dump(const void *buf, size_t len) {
 int main(void) {
     debug_init_isviewer();
     timer_init();
-    controller_init();
 
-    if (!mempak_init(0)) {
-        logf("ERROR: Kein Mempak an Port 1 gefunden.");
+    // Joypad-Subsystem initialisieren & Zubehör checken
+    joypad_init();
+    if (!joypad_is_connected(JOYPAD_PORT_1)) {
+        logf("ERROR: Kein Controller an Port 1.");
+        for(;;) {}
+    }
+    if (joypad_get_accessory_type(JOYPAD_PORT_1) != JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK) {
+        logf("ERROR: Kein Controller-Pak an Port 1.");
         for(;;) {}
     }
 
     // Bis zu 4 Bänke lesen
     for (int b = 0; b < BANKS; b++) {
-        if (mempak_bank_select(0, b)) {
-            logf("WARN: Bank %d nicht schaltbar — restliche Bänke werden mit 0xFF gefüllt.", b);
+        if (bank_select(JOYPAD_PORT_1, b)) {
+            logf("WARN: Bank %d nicht schaltbar — rest mit 0xFF.", b);
             memset(dumpbuf + b*PAGES*PAGE_SIZE, 0xFF, (BANKS - b)*PAGES*PAGE_SIZE);
             break;
         }
         for (int s = 0; s < PAGES; s++) {
-            uint16_t addr = ADR_DATA + s*PAGE_SIZE; // 0x0000..0x7FE0
-            int rc = mempak_read_256(0, addr, dumpbuf + (b*PAGES + s)*PAGE_SIZE);
-            if (rc) {
-                logf("WARN: Read-Fehler in Bank %d, Seite %d (rc=%d).", b, s, rc);
-                // Rest der aktuellen und folgenden Seiten/Bänke mit 0xFF auffüllen
+            uint16_t addr = (uint16_t)(s * PAGE_SIZE); // 0x0000..0x7FE0
+            if (read_page256(JOYPAD_PORT_1, addr, dumpbuf + (b*PAGES + s)*PAGE_SIZE)) {
+                logf("WARN: Read-Fehler in Bank %d, Seite %d.", b, s);
                 memset(dumpbuf + (b*PAGES + s)*PAGE_SIZE, 0xFF,
                        (BANKS*PAGES - (b*PAGES + s))*PAGE_SIZE);
                 goto write_out;
