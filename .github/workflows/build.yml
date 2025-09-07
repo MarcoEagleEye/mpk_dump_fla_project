@@ -9,10 +9,16 @@ jobs:
       image: ghcr.io/dragonminded/libdragon:latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Build ROM
         run: |
-          export N64_INST=/opt/libdragon
-          make
+          if command -v libdragon >/dev/null 2>&1; then
+            libdragon make
+          else
+            export N64_INST=/opt/libdragon
+            make
+          fi
+
       - name: Upload ROM
         uses: actions/upload-artifact@v4
         with:
