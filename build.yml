@@ -1,0 +1,25 @@
+name: build-n64-rom
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dragonminded/libdragon:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ROM
+        run: |
+          export N64_INST=/opt/libdragon
+          make
+
+      - name: Upload ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpk_dump_fla
+          path: |
+            *.z64
+            *.v64
+            *.n64
